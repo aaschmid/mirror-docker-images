@@ -3,8 +3,8 @@ name: Mirror Docker Images
 on:
   workflow_dispatch:
   schedule:
-    # Run daily at 2 AM UTC
-    - cron: '0 2 * * *'
+    # Run weekly on Friday at 2 AM UTC
+    - cron: '0 2 * * 5'
   push:
     branches:
       - main
@@ -30,6 +30,9 @@ jobs:
           - source: miguelndecarvalho/speedtest-exporter
             target: miguelndecarvalho/speedtest-exporter
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -42,83 +45,5 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Mirror image with version detection
-        run: |
-          SOURCE_IMAGE="${{ matrix.source }}"
-          TARGET_IMAGE="${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.target }}"
-          SOURCE_LATEST="${SOURCE_IMAGE}:latest"
-
-          echo "Source image: $SOURCE_LATEST"
-          echo "Target image: $TARGET_IMAGE"
-
-          # Check if source image exists
-          if ! docker buildx imagetools inspect "$SOURCE_LATEST" >/dev/null 2>&1; then
-            echo "Error: Image $SOURCE_LATEST not found"
-            exit 1
-          fi
-
-          # Get available architectures for the source image (for logging)
-          ARCHS=$(docker buildx imagetools inspect "$SOURCE_LATEST" --format '{{range .Manifest.Manifests}}{{.Platform.Architecture}}{{if .Platform.Variant}}/{{.Platform.Variant}}{{end}} {{end}}' 2>/dev/null | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//')
-
-          if [ -n "$ARCHS" ]; then
-            echo "Available architectures: $ARCHS"
-
-            # Verify arm64 is available
-            if echo "$ARCHS" | grep -q "arm64"; then
-              echo "✓ arm64 architecture found"
-            else
-              echo "⚠ Warning: arm64 architecture not found for $SOURCE_LATEST"
-            fi
-          else
-            echo "Note: Could not determine architectures (may be single-arch image)"
-          fi
-
-          # Inspect image to find version
-          # Pull the image for amd64 architecture to inspect labels
-          echo "Pulling image for version inspection..."
-          VERSION=""
-          if docker pull --platform linux/amd64 "$SOURCE_LATEST" >/dev/null 2>&1; then
-            # Try common OCI label fields for version
-            VERSION=$(docker inspect "$SOURCE_LATEST" --format '{{index .Config.Labels "org.opencontainers.image.version"}}' 2>/dev/null)
-
-            # Fallback to other common version labels
-            if [ -z "$VERSION" ] || [ "$VERSION" = "<no value>" ]; then
-              VERSION=$(docker inspect "$SOURCE_LATEST" --format '{{index .Config.Labels "version"}}' 2>/dev/null)
-            fi
-
-            if [ -z "$VERSION" ] || [ "$VERSION" = "<no value>" ]; then
-              VERSION=$(docker inspect "$SOURCE_LATEST" --format '{{index .Config.Labels "VERSION"}}' 2>/dev/null)
-            fi
-
-            # Clean up the pulled image to save space
-            docker rmi "$SOURCE_LATEST" >/dev/null 2>&1 || true
-          else
-            echo "Warning: Could not pull image for inspection, will use latest tag only"
-          fi
-
-          # If still no version found, use a fallback
-          if [ -z "$VERSION" ] || [ "$VERSION" = "<no value>" ]; then
-            echo "⚠ Warning: Could not determine version from image labels"
-            echo "Will tag image as 'latest' only"
-            VERSION=""
-          else
-            echo "Detected version: $VERSION"
-          fi
-
-          # Copy the multi-architecture manifest to target with latest tag
-          echo "Copying multi-arch manifest from $SOURCE_LATEST to ${TARGET_IMAGE}:latest"
-          if ! docker buildx imagetools create --tag "${TARGET_IMAGE}:latest" "$SOURCE_LATEST"; then
-            echo "✗ Error: Failed to copy image $SOURCE_LATEST"
-            exit 1
-          fi
-          echo "✓ Successfully mirrored $SOURCE_LATEST -> ${TARGET_IMAGE}:latest"
-
-          # If version was found, also tag with version
-          if [ -n "$VERSION" ]; then
-            echo "Tagging with version: ${TARGET_IMAGE}:${VERSION}"
-            if docker buildx imagetools create --tag "${TARGET_IMAGE}:${VERSION}" "$SOURCE_LATEST"; then
-              echo "✓ Successfully tagged ${TARGET_IMAGE}:${VERSION}"
-            else
-              echo "⚠ Warning: Failed to tag with version, but latest tag succeeded"
-            fi
-          fi
+      - name: Mirror image
+        run: ./mirror-image.sh "${{ matrix.source }}" "${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.target }}"
