@@ -17,7 +17,7 @@ jobs:
       directories: ${{ steps.set-matrix.outputs.directories }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Discover images
         id: set-matrix
@@ -38,7 +38,7 @@ jobs:
         directory: ${{ fromJson(needs.discover.outputs.directories) }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Parse Dockerfile FROM instruction
         id: parse-from
